@@ -1,0 +1,141 @@
+{
+  "project": "RugGenesis NFT Claim Checker Website",
+  "description": "Create a website that checks claimable RUG tokens for RugGenesis NFTs listed on OpenSea using the claim contract, prioritizing NFTs with the highest net value (claimable value minus purchase cost). The site fetches OpenSea listings, queries the claim contract (0x6923cc9c35230f0d18ef813a0f3aa88400c78409) with ethers.js using Alchemy, and fetches real-time RUG token price from DexScreener.",
+  "requirements": {
+    "functionality": [
+      "Fetch active OpenSea listings for RugGenesis NFTs (contract: 0x8ff1523091c9517bc328223d50b52ef450200339, slug: ruggenesis-nft) using OpenSea API v2.",
+      "Use the OpenSea API v2 endpoint: https://api.opensea.io/api/v2/listings/collection/{collection_slug}/all with X-API-KEY header.",
+      "Parse token IDs from protocol_data.parameters.offer[0].identifierOrCriteria in the API response.",
+      "Parse prices from price.current.value in the API response and convert from wei to ETH.",
+      "Query claimable RUG tokens (contract: 0xD2d8D78087D0E43BC4804B6F946674b2Ee406b80) using the claim contract (0x6923cc9c35230f0d18ef813a0f3aa88400c78409) and function getClaimAmount.",
+      "Calculate: Listing Price (USD) from ETH using CoinGecko, Claimable Value (USD) = claimable tokens × real-time RUG token price from DexScreener, Net Value (USD) = Claimable Value - Listing Price.",
+      "Filter for NFTs with claimable tokens > 0, sort by Net Value (descending).",
+      "Display results in a table: Token ID, Price (USD), Claimable Tokens, Claimable Value (USD), Net Value (USD), OpenSea Link.",
+      "Limit to 50 listings initially."
+    ],
+    "tools": {
+      "languages": ["JavaScript (Node.js)"],
+      "dependencies": [
+        "express",
+        "axios",
+        "ethers",
+        "dotenv",
+        "cors"
+      ],
+      "api_keys": {
+        "opensea": "Store in .env as OPENSEA_API_KEY",
+        "alchemy": "Store in .env as ALCHEMY_API_KEY (e.g., from alchemy.com)"
+      },
+      "environment": {
+        "node_version": "18+",
+        "port": 3000
+      }
+    },
+    "constraints": {
+      "opensea_api_limit": "~100 calls/day (free tier)",
+      "ethers_rpc": "Requires Ethereum mainnet RPC via Alchemy"
+    }
+  },
+  "html_selectors": {
+    "input_field": "input.w-96.placeholder\\:text-gray-500.placeholder\\:italic.placeholder\\:font-sans",
+    "check_button": "button[type=\"submit\"].bg-primary-200",
+    "output_table_row": "tr.k-table-row",
+    "output_amount": "td.k-table-td[data-grid-col-index=\"1\"]",
+    "output_fallback": "td"
+  },
+  "contracts": {
+    "ruggenesis_nft": "0x8ff1523091c9517bc328223d50b52ef450200339",
+    "rug_token": "0xD2d8D78087D0E43BC4804B6F946674b2Ee406b80",
+    "claim_contract": "0x6923cc9c35230f0d18ef813a0f3aa88400c78409"
+  },
+  "abi": {
+    "claim_contract": [
+      {"inputs":[{"internalType":"address","name":"rugToken_","type":"address"},{"internalType":"address","name":"genesisNFT_","type":"address"},{"internalType":"address","name":"properties_","type":"address"},{"internalType":"uint256","name":"startTime_","type":"uint256"}],"stateMutability":"nonpayable","type":"constructor"},
+      {"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"previousOwner","type":"address"},{"indexed":true,"internalType":"address","name":"newOwner","type":"address"}],"name":"OwnershipTransferred","type":"event"},
+      {"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"tokenId","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"}],"name":"RugTokensClaimed","type":"event"},
+      {"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint256","name":"startTime","type":"uint256"}],"name":"StartTimeSet","type":"event"},
+      {"stateMutability":"nonpayable","type":"fallback"},
+      {"inputs":[],"name":"RUG_TOKEN_DECIMALS_MULTIPLIER","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+      {"inputs":[{"internalType":"uint256[]","name":"tokenIds","type":"uint256[]"}],"name":"bulkClaimTokens","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
+      {"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"claimTokens","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},
+      {"inputs":[],"name":"genesisNFT","outputs":[{"internalType":"contract IERC721MembershipFull","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+      {"inputs":[{"internalType":"uint256","name":"tokenId","type":"uint256"}],"name":"getClaimAmount","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+      {"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"lastClaim","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+      {"inputs":[],"name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+      {"inputs":[],"name":"properties","outputs":[{"internalType":"contract RugUtilityProperties","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+      {"inputs":[],"name":"renounceOwnership","outputs":[],"stateMutability":"nonpayable","type":"function"},
+      {"inputs":[],"name":"rugToken","outputs":[{"internalType":"contract IERC20ClubFull","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+      {"inputs":[{"internalType":"uint256","name":"start","type":"uint256"}],"name":"setStartTime","outputs":[],"stateMutability":"nonpayable","type":"function"},
+      {"inputs":[],"name":"startTime","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+      {"inputs":[{"internalType":"address","name":"newOwner","type":"address"}],"name":"transferOwnership","outputs":[],"stateMutability":"nonpayable","type":"function"}
+    ]
+  },
+  "constants": {
+    "collection_slug": "ruggenesis-nft",
+    "rug_token_decimals": 18
+  },
+  "code": {
+    "server_js": {
+      "content": "const express = require('express');\nconst axios = require('axios');\nconst { ethers } = require('ethers');\nconst cors = require('cors');\nrequire('dotenv').config();\n\nconst app = express();\napp.use(cors());\napp.use(express.json());\napp.use(express.static('public'));\n\nconst OPENSEA_API_KEY = process.env.OPENSEA_API_KEY;\nconst ALCHEMY_KEY = process.env.ALCHEMY_KEY;\nconst COLLECTION_SLUG = 'ruggenesis-nft';\nconst CLAIM_CONTRACT_ADDRESS = '0x6923cc9c35230f0d18ef813a0f3aa88400c78409';\nconst RUG_TOKEN_ADDRESS = '0xD2d8D78087D0E43BC4804B6F946674b2Ee406b80';\nconst RUGGENESIS_NFT_ADDRESS = '0x8ff1523091c9517bc328223d50b52ef450200339';\nconst ABI = [{\"inputs\":[{\"internalType\":\"address\",\"name\":\"rugToken_\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"genesisNFT_\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"properties_\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"startTime_\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"previousOwner\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"newOwner\",\"type\":\"address\"}],\"name\":\"OwnershipTransferred\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"tokenId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"RugTokensClaimed\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"startTime\",\"type\":\"uint256\"}],\"name\":\"StartTimeSet\",\"type\":\"event\"},{\"stateMutability\":\"nonpayable\",\"type\":\"fallback\"},{\"inputs\":[],\"name\":\"RUG_TOKEN_DECIMALS_MULTIPLIER\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256[]\",\"name\":\"tokenIds\",\"type\":\"uint256[]\"}],\"name\":\"bulkClaimTokens\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"tokenId\",\"type\":\"uint256\"}],\"name\":\"claimTokens\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"genesisNFT\",\"outputs\":[{\"internalType\":\"contract IERC721MembershipFull\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"tokenId\",\"type\":\"uint256\"}],\"name\":\"getClaimAmount\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"lastClaim\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"owner\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"properties\",\"outputs\":[{\"internalType\":\"contract RugUtilityProperties\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"renounceOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"rugToken\",\"outputs\":[{\"internalType\":\"contract IERC20ClubFull\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"start\",\"type\":\"uint256\"}],\"name\":\"setStartTime\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"startTime\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"newOwner\",\"type\":\"address\"}],\"name\":\"transferOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}];\n\n// Initialize Ethereum provider with Alchemy\nconst provider = new ethers.JsonRpcProvider(`https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`);\nconst claimContract = new ethers.Contract(CLAIM_CONTRACT_ADDRESS, ABI, provider);\n\n// Function to get real-time RUG token price from DexScreener\nasync function getRugTokenPrice() {\n  try {\n    const response = await axios.get(`https://api.dexscreener.com/latest/pairs/ethereum/0xD2d8D78087D0E43BC4804B6F946674b2Ee406b80`);\n    return response.data.pairs[0]?.priceUsd || 0;\n  } catch (error) {\n    console.error('Error fetching RUG token price:', error.message);\n    return 0;\n  }\n}\n\n// Function to get claimable amount for a token ID\nasync function getClaimableAmount(tokenId) {\n  try {\n    const amount = await claimContract.getClaimAmount(tokenId);\n    return ethers.formatUnits(amount, 18); // Adjust decimals if needed based on RUG token\n  } catch (error) {\n    console.error(`Error fetching claim amount for token ${tokenId}:`, error.message);\n    return 0;\n  }\n}\n\n// Route: Fetch listings and check claims\napp.get('/check-listings', async (req, res) => {\n  try {\n    // Step 1: Fetch OpenSea listings (cheapest first)\n    let allListings = [];\n    let next = '';\n    do {\n      const params = new URLSearchParams({\n        limit: '50',\n        order_by: 'price',\n        order: 'asc',\n        ...(next && { before: next })\n      });\n      const response = await axios.get(\n        `https://api.opensea.io/api/v2/listings/collection/${COLLECTION_SLUG}/all?${params}`,\n        { headers: { 'X-API-KEY': OPENSEA_API_KEY } }\n      );\n      allListings = allListings.concat(response.data.listings || []);\n      next = response.data.next;\n    } while (next && allListings.length < 50); // Limit to 50\n\n    // Step 2: Fetch ETH/USD price and RUG token price\n    const ethPrice = await axios.get('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');\n    const ethUsd = ethPrice.data.ethereum.usd;\n    const rugTokenPrice = await getRugTokenPrice();\n\n    // Step 3: Check claimable amounts (parallel)\n    const results = [];\n    const tokenIds = allListings.map(listing => listing.nft_id);\n    const claimablePromises = tokenIds.map(async (tokenId) => {\n      const listing = allListings.find(l => l.nft_id === tokenId);\n      const priceEth = parseFloat(listing.current_price) / 1e18; // Wei to ETH\n      const priceUsd = priceEth * ethUsd;\n      const claimableAmount = await getClaimableAmount(tokenId);\n      const claimableValueUsd = claimableAmount * rugTokenPrice;\n      const netValueUsd = claimableValueUsd - priceUsd;\n\n      if (claimableAmount > 0) {\n        return {\n          tokenId,\n          priceEth: priceEth.toFixed(4),\n          priceUsd: priceUsd.toFixed(2),\n          claimableAmount,\n          claimableValueUsd: claimableValueUsd.toFixed(2),\n          netValueUsd: netValueUsd.toFixed(2),\n          openseaUrl: `https://opensea.io/assets/ethereum/${COLLECTION_SLUG}/${tokenId}`\n        };\n      }\n      return null;\n    });\n\n    const resolved = await Promise.all(claimablePromises);\n    results.push(...resolved.filter(r => r !== null));\n\n    // Step 4: Sort by net value (descending)\n    results.sort((a, b) => parseFloat(b.netValueUsd) - parseFloat(a.netValueUsd));\n\n    res.json({ listings: results });\n  } catch (error) {\n    console.error(error);\n    res.status(500).json({ error: 'Failed to fetch data' });\n  }\n});\n\napp.listen(process.env.PORT || 3000, () => console.log('Server running on port 3000'));",
+      "instructions": "Save as server.js in the project root. Add ALCHEMY_KEY to .env with an Alchemy project API key (from alchemy.com). Install ethers with npm install ethers."
+    },
+    "index_html": {
+      "content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Rug Claim Checker</title>\n  <style>\n    body { font-family: Arial; max-width: 800px; margin: 0 auto; padding: 20px; }\n    button { padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer; }\n    table { width: 100%; border-collapse: collapse; margin-top: 20px; }\n    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }\n    th { background: #f2f2f2; }\n  </style>\n</head>\n<body>\n  <h1>RugGenesis Claim Checker</h1>\n  <button onclick=\"checkListings()\">Check Listings</button>\n  <div id=\"results\"></div>\n\n  <script>\n    async function checkListings() {\n      document.getElementById('results').innerHTML = '<p>Loading...</p>';\n      try {\n        const response = await fetch('/check-listings');\n        const data = await response.json();\n\n        let html = '<h2>Claimable Listings (Sorted by Net Value)</h2>';\n        if (data.listings.length === 0) {\n          html += '<p>No claimable listings found.</p>';\n        } else {\n          html += '<table><tr><th>Token ID</th><th>Price (USD)</th><th>Claimable Tokens</th><th>Claimable Value (USD)</th><th>Net Value (USD)</th><th>OpenSea Link</th></tr>';\n          data.listings.forEach(l => {\n            html += `<tr>\n              <td>${l.tokenId}</td>\n              <td>$${l.priceUsd}</td>\n              <td>${l.claimableAmount}</td>\n              <td>$${l.claimableValueUsd}</td>\n              <td>$${l.netValueUsd}</td>\n              <td><a href=\"${l.openseaUrl}\" target=\"_blank\">View</a></td>\n            </tr>`;\n          });\n          html += '</table>';\n        }\n        document.getElementById('results').innerHTML = html;\n      } catch (error) {\n        document.getElementById('results').innerHTML = '<p>Error fetching data.</p>';\n      }\n    }\n  </script>\n</body>\n</html>",
+      "instructions": "Save as index.html in a public folder (create if needed: mkdir public)."
+    }
+  },
+  "deployment": {
+    "options": [
+      {
+        "platform": "Vercel",
+        "steps": [
+          "Push the project to a GitHub repository.",
+          "Import the repository into Vercel.",
+          "Set OPENSEA_API_KEY and ALCHEMY_API_KEY in the Vercel dashboard environment variables.",
+          "Create vercel.json in the project root with: { \"version\": 2, \"builds\": [{ \"src\": \"server.js\", \"use\": \"@vercel/node\" }], \"routes\": [{ \"src\": \"/(.*)\", \"dest\": \"server.js\" }] }",
+          "Deploy the project from Vercel dashboard."
+        ]
+      }
+    ],
+    "notes": "No Puppeteer required, reducing memory needs to ~0.5GB. Vercel free tier should suffice."
+  },
+  "testing": {
+    "instructions": [
+      "Run node server.js locally (ensure .env has ALCHEMY_API_KEY).",
+      "Visit http://localhost:3000, click 'Check Listings'.",
+      "Verify table shows NFTs with claimable RUG tokens >0, sorted by net value, using real-time RUG token price.",
+      "Test with token IDs from OpenSea (e.g., 9567).",
+      "Debug ethers.js or axios errors with console.log(error) in getClaimableAmount or getRugTokenPrice."
+    ]
+  },
+  "optimizations": {
+    "performance": [
+      "Cache ETH/USD price for 5 minutes using node-cache.",
+      "Cache RUG token price for 5 minutes using node-cache.",
+      "Process listings in chunks with concurrency limits to avoid rate limiting.",
+      "Increase limit to 100 listings if needed."
+    ],
+    "dynamic_claim_cost": "Already implemented with DexScreener.",
+    "rate_limits": [
+      "Implemented fetchWithRetry for OpenSea API with exponential backoff.",
+      "Handle rate limiting (HTTP 429) with retry-after header respect.",
+      "Handle server errors (5xx) with retries.",
+      "Handle authentication errors (401) with clear error messages."
+    ],
+    "api_response_handling": [
+      "Robust validation of OpenSea API v2 response structure.",
+      "Extract token IDs from protocol_data.parameters.offer[0].identifierOrCriteria.",
+      "Convert price values from wei to ETH using ethers.formatEther.",
+      "Format prices with appropriate decimal places for display."
+    ]
+  },
+  "notes": [
+    "Use Alchemy (https://www.alchemy.com) to get an API key for the Ethereum mainnet.",
+    "OpenSea API v2 requires an API key in the X-API-KEY header.",
+    "OpenSea API v2 response structure differs significantly from v1 - token IDs are in protocol_data.parameters.offer[0].identifierOrCriteria.",
+    "OpenSea API v2 prices are in wei format and need to be converted to ETH using ethers.formatEther().",
+    "Verify getClaimAmount returns correct decimals (adjust formatUnits if needed).",
+    "Monitor OpenSea API usage in dashboard.",
+    "The environment variable for Alchemy should be ALCHEMY_API_KEY (not ALCHEMY_KEY)."
+  ]
+}
