@@ -1,9 +1,19 @@
+require('dotenv').config();
+
+// Debug environment variables
+console.log('EMAIL_USER:', process.env.EMAIL_USER ? 'SET' : 'NOT SET');
+console.log('ALERT_TO_EMAIL:', process.env.ALERT_TO_EMAIL ? 'SET' : 'NOT SET');
+console.log('EMAIL_SERVICE:', process.env.EMAIL_SERVICE || 'NOT SET');
+console.log('EMAIL_PORT:', process.env.EMAIL_PORT || 'NOT SET');
+console.log('OPENSEA_API_KEY:', process.env.OPENSEA_API_KEY ? 'SET' : 'NOT SET');
+console.log('ALCHEMY_API_KEY:', process.env.ALCHEMY_API_KEY ? 'SET' : 'NOT SET');
+
 const express = require('express');
 const axios = require('axios');
 const { ethers } = require('ethers');
 const cors = require('cors');
 const NodeCache = require('node-cache');
-require('dotenv').config();
+const nodemailer = require('nodemailer');
 
 const app = express();
 app.use(cors());
@@ -12,6 +22,99 @@ app.use(express.static('public'));
 
 // Cache setup for prices (5 minute TTL)
 const cache = new NodeCache({ stdTTL: 300 });
+
+// Email transporter setup
+const transporter = nodemailer.createTransport({
+  host: process.env.EMAIL_SERVICE || 'smtp.gmail.com',
+  port: process.env.EMAIL_PORT || 587,
+  secure: process.env.EMAIL_SECURE === 'true' || false,
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
+
+// Function to send email alerts for positive net value listings
+async function sendEmailAlert(listings) {
+  console.log('Checking email configuration...');
+  if (!process.env.EMAIL_USER || !process.env.ALERT_TO_EMAIL) {
+    console.log('Email configuration not found. Skipping email alerts.');
+    return;
+  }
+  console.log('Email configuration found. Proceeding with email alert check.');
+
+  try {
+    // Filter listings with net value >= $100
+    const NET_VALUE_THRESHOLD = 100; // $100 threshold
+    const highValueListings = listings.filter(listing => parseFloat(listing.netValueUsd) >= NET_VALUE_THRESHOLD);
+    console.log(`Found ${highValueListings.length} listings with net value >= $${NET_VALUE_THRESHOLD} out of ${listings.length} total listings.`);
+    
+    if (highValueListings.length === 0) {
+      console.log(`No listings with net value >= $${NET_VALUE_THRESHOLD} to alert.`);
+      return;
+    }
+    console.log('Preparing to send email alert for positive listings...');
+
+    // Create email content
+    let htmlContent = `
+      <h2>RugGenesis NFT Positive Value Alert</h2>
+      <p>Found ${highValueListings.length} listing(s) with net value >= $${NET_VALUE_THRESHOLD} (buy NFT, claim tokens, sell tokens, sell NFT at floor price):</p>
+      <table border="1" cellpadding="5" cellspacing="0">
+        <thead>
+          <tr>
+            <th>Token ID</th>
+            <th>Price (ETH)</th>
+            <th>Price (USD)</th>
+            <th>Claimable Amount</th>
+            <th>Claimable Value (USD)</th>
+            <th>Potential Sale Price (ETH)</th>
+            <th>Potential Sale Price (USD)</th>
+            <th>Net Value (USD)</th>
+            <th>OpenSea Link</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    highValueListings.forEach(listing => {
+      htmlContent += `
+        <tr>
+          <td>${listing.tokenId}</td>
+          <td>${listing.priceEth}</td>
+          <td>$${parseFloat(listing.priceUsd).toFixed(2)}</td>
+          <td>${Math.floor(parseFloat(listing.claimableAmount))}</td>
+          <td>$${parseFloat(listing.claimableValueUsd).toFixed(2)}</td>
+          <td>${listing.potentialSalePriceEth}</td>
+          <td>$${parseFloat(listing.potentialSalePriceUsd).toFixed(2)}</td>
+          <td style="color: ${parseFloat(listing.netValueUsd) > 0 ? 'green' : 'red'}">$${parseFloat(listing.netValueUsd).toFixed(2)}</td>
+          <td><a href="${listing.openseaUrl}">View on OpenSea</a></td>
+        </tr>
+      `;
+    });
+
+    htmlContent += `
+        </tbody>
+      </table>
+      <p><em>This is an automated alert from your RugGenesis NFT Claim Checker.</em></p>
+    `;
+
+    // Send email
+    console.log('Attempting to send email...');
+    const info = await transporter.sendMail({
+      from: process.env.ALERT_FROM_EMAIL || process.env.EMAIL_USER,
+      to: process.env.ALERT_TO_EMAIL,
+      subject: `RugGenesis Alert: ${highValueListings.length} Listings with Net Value >= $${NET_VALUE_THRESHOLD}`,
+      html: htmlContent
+    });
+
+    console.log('Email alert sent successfully:', info.messageId);
+  } catch (error) {
+    console.error('Error sending email alert:', error.message);
+    if (error.code === 'EAUTH') {
+      console.error('Email authentication failed. Please check that you are using an application-specific password if using Gmail.');
+    }
+  }
+}
 
 // Load environment variables
 const OPENSEA_API_KEY = process.env.OPENSEA_API_KEY;
@@ -22,6 +125,7 @@ const COLLECTION_SLUG = 'ruggenesis-nft';
 const CLAIM_CONTRACT_ADDRESS = '0x6923cc9c35230f0d18ef813a0f3aa88400c78409';
 const RUG_TOKEN_ADDRESS = '0xD2d8D78087D0E43BC4804B6F946674b2Ee406b80';
 const RUGGENESIS_NFT_ADDRESS = '0x8ff1523091c9517bc328223d50b52ef450200339';
+const RUGGENESIS_NFT_COLLECTION = 'ruggenesis-nft';
 const RUG_TOKEN_DECIMALS = 18;
 
 // Claim contract ABI (only the functions we need)
@@ -121,15 +225,88 @@ async function getRugTokenPrice() {
 // Get claimable amount for a token ID
 async function getClaimableAmount(tokenId) {
   try {
-    const amount = await claimContract.getClaimAmount(tokenId);
-    console.log(`Raw claimable amount for token ${tokenId}:`, amount.toString());
+    // Call the claim contract to get the claimable amount
+    const claimableAmount = await claimContract.getClaimAmount(tokenId);
     
-    // The contract is likely returning the raw value without decimals
-    // Instead of using formatUnits with 18 decimals, we'll return the raw value
-    return amount.toString();
+    // The contract returns values in wei (10^18), but the actual token count is the value multiplied by 10^18
+    // For example, 0.000000000000000015 * 10^18 = 15 tokens
+    // We'll convert this to a more readable format
+    const formattedAmount = ethers.formatUnits(claimableAmount, RUG_TOKEN_DECIMALS);
+    
+    // Convert the scientific notation to a regular number
+    const numericValue = parseFloat(formattedAmount);
+    
+    // If the value is very small but non-zero, it's likely representing actual tokens
+    // Multiply by 10^18 to get the actual token count
+    if (numericValue > 0 && numericValue < 0.001) {
+      // Convert to actual token count (reverse the 18 decimal places)
+      const actualTokens = Math.round(numericValue * Math.pow(10, RUG_TOKEN_DECIMALS));
+      return actualTokens.toString();
+    }
+    
+    return formattedAmount;
   } catch (error) {
-    console.error(`Error getting claimable amount for token ${tokenId}:`, error);
+    console.error(`Error fetching claimable amount for token ${tokenId}:`, error.message);
     return '0';
+  }
+}
+
+// Get floor price for an NFT (lowest listing price in the collection)
+async function getNFTSalePrice(tokenId) {
+  try {
+    // Ensure we have an API key
+    if (!OPENSEA_API_KEY) {
+      console.error('OpenSea API key is missing');
+      return 0.09; // Fallback price
+    }
+    
+    const options = {
+      headers: {
+        'X-API-KEY': OPENSEA_API_KEY,
+        'Accept': 'application/json'
+      }
+    };
+    
+    // Get collection stats to find floor price
+    const statsUrl = `https://api.opensea.io/api/v2/collections/${RUGGENESIS_NFT_COLLECTION}/stats`;
+    console.log(`Fetching collection stats from: ${statsUrl}`);
+    
+    const statsResponse = await fetchWithRetry(statsUrl, options);
+    
+    if (statsResponse.data && statsResponse.data.total && statsResponse.data.total.floor_price) {
+      const floorPrice = parseFloat(statsResponse.data.total.floor_price);
+      console.log(`Floor price for collection: ${floorPrice} ETH`);
+      return floorPrice;
+    }
+    
+    // If we can't get the floor price from stats, try to get listings and find the lowest price
+    console.log('Floor price not found in stats, fetching listings to determine floor price');
+    const listings = await getOpenSeaListings(50, 0);
+    
+    if (Array.isArray(listings) && listings.length > 0) {
+      // Extract prices from all listings
+      const prices = listings.map(listing => {
+        if (listing.price && listing.price.current && listing.price.current.value) {
+          const priceWei = listing.price.current.value;
+          return parseFloat(ethers.formatEther(priceWei));
+        }
+        return null;
+      }).filter(price => price !== null);
+      
+      if (prices.length > 0) {
+        // Find the lowest price (floor price)
+        const floorPrice = Math.min(...prices);
+        console.log(`Floor price determined from listings: ${floorPrice} ETH`);
+        return floorPrice;
+      }
+    }
+    
+    // If all else fails, use fallback price
+    console.log('Could not determine floor price, using fallback price of 0.09 ETH');
+    return 0.09;
+  } catch (error) {
+    console.error('Error fetching floor price:', error.message);
+    return 0.09; // Fallback price
   }
 }
 
@@ -218,15 +395,18 @@ app.get('/check-listings', async (req, res) => {
     
     console.log(`Received request to /check-listings - fetching all listings`);
     
-    // Get prices and listings in parallel
-    const [ethPrice, rugPrice, listings] = await Promise.all([
+    // Get prices, floor price, and listings in parallel
+    const [ethPrice, rugPrice, floorPriceEth, listings] = await Promise.all([
       getEthPrice(),
       getRugTokenPrice(),
+      getNFTSalePrice(), // Get floor price for the collection
       getOpenSeaListings(pageSize, page)
     ]).catch(error => {
       console.error('Error in Promise.all:', error);
       throw error;
     });
+    
+    console.log(`Floor price for collection: ${floorPriceEth} ETH`);
     
     console.log(`Retrieved prices - ETH: $${ethPrice}, RUG: $${rugPrice}`);
     
@@ -298,17 +478,28 @@ app.get('/check-listings', async (req, res) => {
           const claimableAmount = await getClaimableAmount(tokenId);
           
           if (parseFloat(claimableAmount) > 0) {
+            // Use the floor price as the potential sale price
+            const potentialSalePriceEth = floorPriceEth;
+            const potentialSalePriceUsd = (floorPriceEth * ethPrice).toFixed(2);
+            
             // Format the claimable amount for display
-            const formattedClaimableAmount = claimableAmount;
-            const claimableValueUsd = (parseFloat(claimableAmount) * rugPrice).toFixed(2);
-            const netValueUsd = (parseFloat(claimableValueUsd) - parseFloat(priceUsd)).toFixed(2);
+            // For very small values (< 0.00000001), use scientific notation to show the actual magnitude
+            // For larger values, use fixed decimal notation with 8 decimal places
+            // This ensures we always display meaningful values instead of showing zeros
+            const claimableAmountValue = parseFloat(claimableAmount);
+            const formattedClaimableAmount = claimableAmountValue < 0.00000001 ? claimableAmountValue.toExponential(8) : claimableAmountValue.toFixed(8);
+            const claimableValueUsd = (claimableAmountValue * rugPrice).toFixed(2);
+            // Calculate net value: Claimable value + potential sale price - listing price
+            const netValueUsd = (parseFloat(claimableValueUsd) + parseFloat(potentialSalePriceUsd) - parseFloat(priceUsd)).toFixed(2);
             
             return {
               tokenId,
               priceEth: formattedPriceEth,
               priceUsd,
-              claimableAmount,
+              claimableAmount: formattedClaimableAmount,
               claimableValueUsd,
+              potentialSalePriceEth: potentialSalePriceEth.toFixed(4),
+              potentialSalePriceUsd,
               netValueUsd,
               openseaUrl: `https://opensea.io/assets/ethereum/${RUGGENESIS_NFT_ADDRESS}/${tokenId}`
             };
@@ -334,6 +525,17 @@ app.get('/check-listings', async (req, res) => {
     
     // Sort by net value (descending)
     processedListings.sort((a, b) => parseFloat(b.netValueUsd) - parseFloat(a.netValueUsd));
+    
+    // Send email alert for positive net value listings
+    if (processedListings.length > 0) {
+      console.log(`Attempting to send email alert for ${processedListings.length} listings`);
+      // Send alert for new listings with positive net value
+      sendEmailAlert(processedListings).catch(error => {
+        console.error('Error in email alert:', error);
+      });
+    } else {
+      console.log('No listings to send email alert for');
+    }
     
     res.json({
       listings: processedListings,
@@ -374,22 +576,30 @@ app.get('/check-token/:tokenId', async (req, res) => {
     
     console.log(`Checking token ID: ${tokenId}`);
     
-    // Get price and claimable amount in parallel
-    const [rugPrice, claimableAmount] = await Promise.all([
+    // Get claimable amount, RUG token price, ETH price, and floor price
+    const [claimableAmount, rugPrice, ethPrice, floorPriceEth] = await Promise.all([
+      getClaimableAmount(tokenId),
       getRugTokenPrice(),
-      getClaimableAmount(tokenId)
+      getEthPrice(),
+      getNFTSalePrice() // Get floor price for the collection
     ]);
     
-    console.log(`Token ${tokenId} - Claimable amount: ${claimableAmount}, RUG price: $${rugPrice}`);
+    console.log(`Floor price for collection: ${floorPriceEth} ETH`);
     
-    // Calculate claimable value using the raw amount
+    // Calculate claimable value in USD
     const claimableValueUsd = (parseFloat(claimableAmount) * rugPrice).toFixed(2);
+    
+    // Calculate potential sale price in USD
+    const potentialSalePriceUsd = (floorPriceEth * ethPrice).toFixed(2);
     
     res.json({
       tokenId,
       claimableAmount,
       rugPrice,
       claimableValueUsd,
+      potentialSalePriceEth: isNaN(floorPriceEth) ? '0.0900' : floorPriceEth.toFixed(4),
+      potentialSalePriceUsd: isNaN(potentialSalePriceUsd) ? (0.09 * ethPrice).toFixed(2) : potentialSalePriceUsd,
+      ethPrice,
       timestamp: new Date().toISOString(),
       message: parseFloat(claimableAmount) > 0 ? 'Token has claimable RUG' : 'Token has no claimable RUG'
     });
@@ -406,6 +616,173 @@ app.get('/check-token/:tokenId', async (req, res) => {
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Automated monitoring endpoint (can be called by a cron job)
+app.get('/monitor-listings', async (req, res) => {
+  try {
+    console.log('Automated monitoring request received');
+    
+    // Get all listings at once
+    const pageSize = 500; // Significantly increased page size to get all listings at once
+    
+    // Get prices, floor price, and listings in parallel
+    const [ethPrice, rugPrice, floorPriceEth, listings] = await Promise.all([
+      getEthPrice(),
+      getRugTokenPrice(),
+      getNFTSalePrice(), // Get floor price for the collection
+      getOpenSeaListings(pageSize, 0)
+    ]).catch(error => {
+      console.error('Error in Promise.all:', error);
+      throw error;
+    });
+    
+    console.log(`Floor price for collection: ${floorPriceEth} ETH`);
+    
+    console.log(`Retrieved prices - ETH: $${ethPrice}, RUG: $${rugPrice}`);
+    
+    // Process each listing
+    const processedListings = [];
+    
+    // Check if listings is an array
+    if (!Array.isArray(listings)) {
+      console.error('Invalid listings data type:', typeof listings);
+      throw new Error('OpenSea API did not return a valid listings array');
+    }
+    
+    // Handle case with no listings
+    if (listings.length === 0) {
+      console.log('No listings found from OpenSea API');
+      return res.json({
+        listings: [],
+        ethPrice,
+        rugPrice,
+        timestamp: new Date().toISOString(),
+        message: 'No active listings found on OpenSea'
+      });
+    }
+    
+    console.log(`Processing ${listings.length} listings from OpenSea`);
+    
+    // Process listings with a limit on concurrent requests to avoid rate limiting
+    const concurrencyLimit = 5;
+    const chunks = [];
+    
+    // Split listings into chunks for processing
+    for (let i = 0; i < listings.length; i += concurrencyLimit) {
+      chunks.push(listings.slice(i, i + concurrencyLimit));
+    }
+    
+    // Process each chunk sequentially
+    for (const chunk of chunks) {
+      // Process listings in each chunk concurrently
+      const chunkPromises = chunk.map(async (listing) => {
+        try {
+          // Validate listing structure based on the new OpenSea API v2 format
+          if (!listing.protocol_data || !listing.protocol_data.parameters || !listing.protocol_data.parameters.offer || 
+              !listing.price || !listing.price.current || !listing.price.current.value) {
+            console.warn('Skipping invalid listing format');
+            return null;
+          }
+          
+          // Extract token ID from the offer parameters
+          // In the new format, the token ID is in protocol_data.parameters.offer[0].identifierOrCriteria
+          const offerItem = listing.protocol_data.parameters.offer[0];
+          if (!offerItem || !offerItem.identifierOrCriteria) {
+            console.warn('Missing offer item or identifier');
+            return null;
+          }
+          
+          const tokenId = offerItem.identifierOrCriteria;
+          console.log(`Processing listing for token ID: ${tokenId}`);
+          
+          // Convert wei to ETH and format properly
+          const priceWei = listing.price.current.value;
+          // Use ethers.js to properly format the ETH value from wei
+          const priceEth = ethers.formatEther(priceWei);
+          // Format price in ETH with proper decimal places
+          const formattedPriceEth = parseFloat(priceEth).toFixed(4);
+          // Calculate USD price with proper formatting
+          const priceUsd = (parseFloat(priceEth) * ethPrice).toFixed(2);
+          
+          // Get claimable amount
+          const claimableAmount = await getClaimableAmount(tokenId);
+          
+          if (parseFloat(claimableAmount) > 0) {
+            // Use the floor price as the potential sale price
+            const potentialSalePriceEth = floorPriceEth;
+            const potentialSalePriceUsd = (floorPriceEth * ethPrice).toFixed(2);
+            
+            // Format the claimable amount for display
+            // For very small values (< 0.00000001), use scientific notation to show the actual magnitude
+            // For larger values, use fixed decimal notation with 8 decimal places
+            // This ensures we always display meaningful values instead of showing zeros
+            const claimableAmountValue = parseFloat(claimableAmount);
+            const formattedClaimableAmount = claimableAmountValue < 0.00000001 ? claimableAmountValue.toExponential(8) : claimableAmountValue.toFixed(8);
+            const claimableValueUsd = (claimableAmountValue * rugPrice).toFixed(2);
+            // Calculate net value: Claimable value + potential sale price - listing price
+            const netValueUsd = (parseFloat(claimableValueUsd) + parseFloat(potentialSalePriceUsd) - parseFloat(priceUsd)).toFixed(2);
+            
+            return {
+              tokenId,
+              priceEth: formattedPriceEth,
+              priceUsd,
+              claimableAmount: formattedClaimableAmount,
+              claimableValueUsd,
+              potentialSalePriceEth: potentialSalePriceEth.toFixed(4),
+              potentialSalePriceUsd,
+              netValueUsd,
+              openseaUrl: `https://opensea.io/assets/ethereum/${RUGGENESIS_NFT_ADDRESS}/${tokenId}`
+            };
+          }
+          return null;
+        } catch (listingError) {
+          console.error('Error processing listing:', listingError.message);
+          return null;
+        }
+      });
+      
+      // Wait for all listings in this chunk to be processed
+      const results = await Promise.all(chunkPromises);
+      processedListings.push(...results.filter(item => item !== null));
+      
+      // Add a small delay between chunks to avoid rate limiting
+      if (chunks.length > 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    
+    console.log(`Found ${processedListings.length} listings with claimable tokens`);
+    
+    // Sort by net value (descending)
+    processedListings.sort((a, b) => parseFloat(b.netValueUsd) - parseFloat(a.netValueUsd));
+    
+    // Send email alert for positive net value listings
+    if (processedListings.length > 0) {
+      // Send alert for new listings with positive net value
+      await sendEmailAlert(processedListings).catch(error => {
+        console.error('Error in email alert:', error);
+      });
+    }
+    
+    res.json({
+      listings: processedListings,
+      ethPrice,
+      rugPrice,
+      timestamp: new Date().toISOString(),
+      message: processedListings.length > 0 ? 'Successfully retrieved listings' : 'No claimable listings found'
+    });
+  } catch (error) {
+    console.error('Error processing listings:', error);
+    res.status(500).json({ 
+      error: 'Error processing listings', 
+      message: error.message || 'Unknown error occurred',
+      listings: [],
+      ethPrice: 0,
+      rugPrice: 0,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Start server

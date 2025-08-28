@@ -90,7 +90,7 @@
       </div>
       <div class="card-body">
         <div class="info-box mb-3">
-          <p class="mb-0">This tool checks OpenSea listings for RugGenesis NFTs and calculates their claimable RUG token value. Results are sorted by net value (claimable value minus listing price).</p>
+          <p class="mb-0">This tool checks OpenSea listings for RugGenesis NFTs and calculates their claimable RUG token value. Results are sorted by net value (claimable value plus potential NFT resale at floor price minus listing price).</p>
         </div>
         
         <div class="row">
@@ -181,9 +181,12 @@
       // Format token amount
       function formatTokenAmount(amount) {
         if (amount === undefined || amount === null || isNaN(amount)) {
-          return '0.00';
+          return '0';
         }
-        return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(amount);
+        
+        const amountValue = parseFloat(amount);
+        // Return the integer part only (floor value)
+        return Math.floor(amountValue);
       }
       
       // Function to load all listings at once
@@ -231,9 +234,12 @@
               const row = document.createElement('tr');
               row.innerHTML = `
                 <td>${listing.tokenId}</td>
+                <td>${listing.priceEth}</td>
                 <td>${formatCurrency(listing.priceUsd)}</td>
-                <td>${formatTokenAmount(listing.claimableAmount)}</td>
+                <td>${Math.floor(parseFloat(listing.claimableAmount))}</td>
                 <td>${formatCurrency(listing.claimableValueUsd)}</td>
+                <td>${listing.potentialSalePriceEth}</td>
+                <td>${formatCurrency(listing.potentialSalePriceUsd)}</td>
                 <td class="${netValueClass}">${formatCurrency(listing.netValueUsd)}</td>
                 <td>
                   <a href="${listing.openseaUrl}" target="_blank" class="btn btn-sm btn-outline-primary">View</a>
@@ -406,9 +412,12 @@
                   <thead>
                     <tr>
                       <th>Token ID</th>
-                      <th>Price</th>
+                      <th>Price (ETH)</th>
+                      <th>Price (USD)</th>
                       <th>Claimable RUG</th>
                       <th>Claimable Value</th>
+                      <th>Potential Sale Price (ETH)</th>
+                      <th>Potential Sale Price (USD)</th>
                       <th>Net Value</th>
                       <th>Action</th>
                     </tr>
@@ -422,9 +431,12 @@
               resultsHtml += `
                 <tr>
                   <td>${listing.tokenId}</td>
+                  <td>${listing.priceEth}</td>
                   <td>${formatCurrency(listing.priceUsd)}</td>
-                  <td>${formatTokenAmount(listing.claimableAmount)}</td>
+                  <td>${Math.floor(parseFloat(listing.claimableAmount))}</td>
                   <td>${formatCurrency(listing.claimableValueUsd)}</td>
+                  <td>${listing.potentialSalePriceEth}</td>
+                  <td>${formatCurrency(listing.potentialSalePriceUsd)}</td>
                   <td class="${netValueClass}">${formatCurrency(listing.netValueUsd)}</td>
                   <td>
                     <a href="${listing.openseaUrl}" target="_blank" class="btn btn-sm btn-outline-primary">View</a>
@@ -503,8 +515,9 @@
               <div class="card-body">
                 <div class="row">
                   <div class="col-md-6">
-                    <p><strong>Claimable RUG Tokens:</strong> ${formatTokenAmount(data.claimableAmount || 0)}</p>
+                    <p><strong>Claimable RUG Tokens:</strong> ${Math.floor(parseFloat(data.claimableAmount || 0))}</p>
                     <p><strong>Claimable Value:</strong> ${formatCurrency(data.claimableValueUsd || 0)}</p>
+                    <p><strong>Potential Sale Price:</strong> ${data.potentialSalePriceEth || '0.0900'} ETH (${formatCurrency(data.potentialSalePriceUsd || 0)})</p>
                   </div>
                   <div class="col-md-6">
                     <a href="https://opensea.io/assets/ethereum/0x8ff1523091c9517bc328223d50b52ef450200339/${data.tokenId}" 
