@@ -11,6 +11,7 @@ console.log('ALCHEMY_API_KEY:', process.env.ALCHEMY_API_KEY ? 'SET' : 'NOT SET')
 const express = require('express');
 const axios = require('axios');
 const { ethers } = require('ethers');
+const path = require('path');
 const cors = require('cors');
 const NodeCache = require('node-cache');
 const nodemailer = require('nodemailer');
@@ -19,6 +20,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
+
+// Root route handler
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 // Cache setup for prices (5 minute TTL)
 const cache = new NodeCache({ stdTTL: 300 });
