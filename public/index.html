@@ -63,6 +63,19 @@
       margin-bottom: 1rem;
       border-radius: 4px;
     }
+    .sortable {
+      cursor: pointer;
+      user-select: none;
+      position: relative;
+    }
+    .sortable:hover {
+      background-color: #f1f3f5;
+    }
+    .sort-icon {
+      display: inline-block;
+      margin-left: 4px;
+      font-size: 0.9em;
+    }
     #loadingIndicator {
       text-align: center;
       padding: 20px;
@@ -282,10 +295,18 @@
       
       // Handle sort when clicking on headers
       function setupSortableHeaders() {
-        document.querySelectorAll('.sortable').forEach(header => {
-          header.style.cursor = 'pointer';
-          header.addEventListener('click', () => {
-            const field = header.getAttribute('data-sort');
+        console.log('Setting up sortable headers');
+        const headers = document.querySelectorAll('.sortable');
+        console.log('Found sortable headers:', headers.length);
+        
+        headers.forEach(header => {
+          // Remove any existing event listeners to prevent duplicates
+          const newHeader = header.cloneNode(true);
+          header.parentNode.replaceChild(newHeader, header);
+          
+          newHeader.addEventListener('click', function() {
+            console.log('Header clicked:', this.getAttribute('data-sort'));
+            const field = this.getAttribute('data-sort');
             if (!field) return;
             
             if (currentSort.field === field) {
@@ -369,11 +390,8 @@
             // Update table with sorted data
             updateTableWithSort();
             
-            // Set up sortable headers if not already done
-            if (!document.querySelector('.sortable').hasAttribute('data-sort-setup')) {
-              setupSortableHeaders();
-              document.querySelector('.sortable').setAttribute('data-sort-setup', 'true');
-            }
+            // Setup sortable headers after table is created
+            setupSortableHeaders();
           }
           
           // If no more listings, remove scroll event listener
@@ -411,9 +429,6 @@
           }
         };
       }
-      
-      // Initialize sortable headers when DOM is loaded
-      setupSortableHeaders();
       
       // Handle scroll event for infinite scrolling
       function handleScroll() {
@@ -575,6 +590,9 @@
           
           resultsDiv.querySelector('.card-body').innerHTML = resultsHtml;
           
+          // Setup sortable headers after table is created
+          setupSortableHeaders();
+          
           // Show or hide the manual load more button
           const loadMoreFooter = document.getElementById('loadMoreFooter');
           if (hasMoreListings) {
@@ -654,6 +672,9 @@
           `;
           
           resultsDiv.querySelector('.card-body').innerHTML = resultsHtml;
+          
+          // Setup sortable headers after table is created
+          setupSortableHeaders();
           
           // Remove scroll event listener when viewing a specific token
           window.removeEventListener('scroll', handleScroll);
