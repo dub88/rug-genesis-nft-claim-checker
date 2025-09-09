@@ -224,6 +224,23 @@
         });
       }
       
+      // Dedupe listings by tokenId (keep the one with the higher net value)
+      function dedupeByTokenId(list) {
+        const map = new Map();
+        for (const item of list || []) {
+          if (!item || !item.tokenId) continue;
+          const existing = map.get(item.tokenId);
+          if (!existing) {
+            map.set(item.tokenId, item);
+          } else {
+            const existingNet = parseFloat(existing.netValueUsd || '0');
+            const currentNet = parseFloat(item.netValueUsd || '0');
+            map.set(item.tokenId, currentNet >= existingNet ? item : existing);
+          }
+        }
+        return Array.from(map.values());
+      }
+      
       // Update table with sorted data
       function updateTableWithSort() {
         const sortedListings = sortListings(allListings, currentSort.field, currentSort.direction);
@@ -383,8 +400,9 @@
               tableBody.appendChild(row);
             });
             
-            // Add new listings to our stored array and sort them
+            // Add new listings to our stored array, then dedupe and sort them
             allListings = allListings.concat(newListings);
+            allListings = dedupeByTokenId(allListings);
             console.log('Total listings loaded:', allListings.length);
             
             // Update table with sorted data
@@ -533,12 +551,13 @@
             Last Updated: ${new Date(data.timestamp || Date.now()).toLocaleTimeString()}
           `;
           
-          // Get listings from the response
+          // Get listings from the response and dedupe by tokenId
           const listings = Array.isArray(data.listings) ? data.listings : [];
-          console.log(`Displaying ${listings.length} listings`);
+          const uniqueListings = dedupeByTokenId(listings);
+          console.log(`Displaying ${uniqueListings.length} listings (deduped from ${listings.length})`);
           
           // Store all listings
-          allListings = listings;
+          allListings = uniqueListings;
           
           // Create results HTML
           let resultsHtml = '';
@@ -565,7 +584,7 @@
                   <tbody id="listingsTableBody">
             `;
             
-            listings.forEach(listing => {
+            uniqueListings.forEach(listing => {
               const netValueClass = parseFloat(listing.netValueUsd) > 0 ? 'positive-value' : 'negative-value';
               
               resultsHtml += `

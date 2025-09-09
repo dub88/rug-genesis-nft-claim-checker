@@ -122,6 +122,28 @@ async function sendEmailAlert(listings) {
   }
 }
 
+// Dedupe listings by tokenId, choosing the entry with the higher net value
+function dedupeListingsByTokenId(listings) {
+  try {
+    const map = new Map();
+    for (const item of listings) {
+      if (!item || !item.tokenId) continue;
+      const existing = map.get(item.tokenId);
+      if (!existing) {
+        map.set(item.tokenId, item);
+      } else {
+        const existingNet = parseFloat(existing.netValueUsd || '0');
+        const currentNet = parseFloat(item.netValueUsd || '0');
+        map.set(item.tokenId, currentNet >= existingNet ? item : existing);
+      }
+    }
+    return Array.from(map.values());
+  } catch (e) {
+    console.error('Error deduping listings:', e.message);
+    return listings;
+  }
+}
+
 // Load environment variables
 const OPENSEA_API_KEY = process.env.OPENSEA_API_KEY;
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
@@ -528,15 +550,21 @@ app.get('/check-listings', async (req, res) => {
     }
     
     console.log(`Found ${processedListings.length} listings with claimable tokens`);
+    // Dedupe by tokenId to avoid showing the same token multiple times
+    const beforeDedupe = processedListings.length;
+    const dedupedListings = dedupeListingsByTokenId(processedListings);
+    if (dedupedListings.length !== beforeDedupe) {
+      console.log(`Deduplicated listings by tokenId: ${beforeDedupe} -> ${dedupedListings.length}`);
+    }
     
     // Sort by net value (descending)
-    processedListings.sort((a, b) => parseFloat(b.netValueUsd) - parseFloat(a.netValueUsd));
+    dedupedListings.sort((a, b) => parseFloat(b.netValueUsd) - parseFloat(a.netValueUsd));
     
     // Send email alert for positive net value listings
-    if (processedListings.length > 0) {
-      console.log(`Attempting to send email alert for ${processedListings.length} listings`);
+    if (dedupedListings.length > 0) {
+      console.log(`Attempting to send email alert for ${dedupedListings.length} listings`);
       // Send alert for new listings with positive net value
-      sendEmailAlert(processedListings).catch(error => {
+      sendEmailAlert(dedupedListings).catch(error => {
         console.error('Error in email alert:', error);
       });
     } else {
@@ -544,14 +572,14 @@ app.get('/check-listings', async (req, res) => {
     }
     
     res.json({
-      listings: processedListings,
+      listings: dedupedListings,
       ethPrice,
       rugPrice,
       timestamp: new Date().toISOString(),
       page,
       limit: pageSize,
       hasMore: listings.length === pageSize, // If we got the full requested limit, there might be more
-      message: processedListings.length > 0 ? 'Successfully retrieved listings' : 'No claimable listings found'
+      message: dedupedListings.length > 0 ? 'Successfully retrieved listings' : 'No claimable listings found'
     });
   } catch (error) {
     console.error('Error processing listings:', error);
@@ -760,23 +788,30 @@ app.get('/monitor-listings', async (req, res) => {
     
     console.log(`Found ${processedListings.length} listings with claimable tokens`);
     
+    // Dedupe by tokenId to avoid showing the same token multiple times
+    const beforeDedupe = processedListings.length;
+    const dedupedListings = dedupeListingsByTokenId(processedListings);
+    if (dedupedListings.length !== beforeDedupe) {
+      console.log(`Deduplicated listings by tokenId: ${beforeDedupe} -> ${dedupedListings.length}`);
+    }
+    
     // Sort by net value (descending)
-    processedListings.sort((a, b) => parseFloat(b.netValueUsd) - parseFloat(a.netValueUsd));
+    dedupedListings.sort((a, b) => parseFloat(b.netValueUsd) - parseFloat(a.netValueUsd));
     
     // Send email alert for positive net value listings
-    if (processedListings.length > 0) {
+    if (dedupedListings.length > 0) {
       // Send alert for new listings with positive net value
-      await sendEmailAlert(processedListings).catch(error => {
+      await sendEmailAlert(dedupedListings).catch(error => {
         console.error('Error in email alert:', error);
       });
     }
     
     res.json({
-      listings: processedListings,
+      listings: dedupedListings,
       ethPrice,
       rugPrice,
       timestamp: new Date().toISOString(),
-      message: processedListings.length > 0 ? 'Successfully retrieved listings' : 'No claimable listings found'
+      message: dedupedListings.length > 0 ? 'Successfully retrieved listings' : 'No claimable listings found'
     });
   } catch (error) {
     console.error('Error processing listings:', error);
