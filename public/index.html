@@ -63,6 +63,19 @@
       margin-bottom: 1rem;
       border-radius: 4px;
     }
+    .sortable {
+      cursor: pointer;
+      user-select: none;
+      position: relative;
+    }
+    .sortable:hover {
+      background-color: #f1f3f5;
+    }
+    .sort-icon {
+      display: inline-block;
+      margin-left: 4px;
+      font-size: 0.9em;
+    }
     #loadingIndicator {
       text-align: center;
       padding: 20px;
@@ -115,9 +128,12 @@
     </div>
     
     <div id="resultsDiv" class="card mb-4 d-none">
-      <div class="card-header">Results</div>
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Results</span>
+        <span id="sortIndicator" class="badge bg-secondary d-none"></span>
+      </div>
       <div class="card-body">
-        <p>Click "Check OpenSea Listings" to view NFTs with claimable RUG tokens.</p>
+        <p>Click "Check OpenSea Listings" to view NFTs with claimable RUG tokens. Click on any column header to sort.</p>
       </div>
       <div class="card-footer text-center d-none" id="loadMoreFooter">
         <button id="manualLoadMoreBtn" class="btn btn-outline-primary btn-sm">Load More Listings</button>
@@ -164,11 +180,12 @@
       }
       const loadingIndicator = document.getElementById('loadingIndicator');
       
-      // Pagination state
+      // Pagination and sorting state
       let currentPage = 0;
       let hasMoreListings = false;
       let allListings = [];
       let isLoading = false;
+      let currentSort = { field: 'netValueUsd', direction: 'desc' }; // Default sort by net value desc
       
       // Format currency
       function formatCurrency(value) {
@@ -187,6 +204,140 @@
         const amountValue = parseFloat(amount);
         // Return the integer part only (floor value)
         return Math.floor(amountValue);
+      }
+      
+      // Sort listings
+      function sortListings(listings, field, direction) {
+        return [...listings].sort((a, b) => {
+          let valueA = a[field];
+          let valueB = b[field];
+          
+          // Convert to numbers if possible
+          if (!isNaN(parseFloat(valueA)) && !isNaN(parseFloat(valueB))) {
+            valueA = parseFloat(valueA);
+            valueB = parseFloat(valueB);
+          }
+          
+          if (valueA < valueB) return direction === 'asc' ? -1 : 1;
+          if (valueA > valueB) return direction === 'asc' ? 1 : -1;
+          return 0;
+        });
+      }
+      
+      // Dedupe listings by tokenId (keep the one with the higher net value)
+      function dedupeByTokenId(list) {
+        const map = new Map();
+        for (const item of list || []) {
+          if (!item || !item.tokenId) continue;
+          const existing = map.get(item.tokenId);
+          if (!existing) {
+            map.set(item.tokenId, item);
+          } else {
+            const existingNet = parseFloat(existing.netValueUsd || '0');
+            const currentNet = parseFloat(item.netValueUsd || '0');
+            map.set(item.tokenId, currentNet >= existingNet ? item : existing);
+          }
+        }
+        return Array.from(map.values());
+      }
+      
+      // Update table with sorted data
+      function updateTableWithSort() {
+        const sortedListings = sortListings(allListings, currentSort.field, currentSort.direction);
+        const tableBody = document.getElementById('listingsTableBody');
+        
+        if (!tableBody) return;
+        
+        // Clear current table
+        tableBody.innerHTML = '';
+        
+        // Add sorted rows
+        sortedListings.forEach(listing => {
+          const netValueClass = parseFloat(listing.netValueUsd) > 0 ? 'positive-value' : 'negative-value';
+          
+          const row = document.createElement('tr');
+          row.innerHTML = `
+            <td>${listing.tokenId}</td>
+            <td>${listing.priceEth}</td>
+            <td>${formatCurrency(listing.priceUsd)}</td>
+            <td>${Math.floor(parseFloat(listing.claimableAmount))}</td>
+            <td>${formatCurrency(listing.claimableValueUsd)}</td>
+            <td>${listing.potentialSalePriceEth}</td>
+            <td>${formatCurrency(listing.potentialSalePriceUsd)}</td>
+            <td class="${netValueClass}">${formatCurrency(listing.netValueUsd)}</td>
+            <td>
+              <a href="${listing.openseaUrl}" target="_blank" class="btn btn-sm btn-outline-primary">View</a>
+            </td>
+          `;
+          
+          tableBody.appendChild(row);
+        });
+        
+        // Update sort indicator
+        updateSortIndicator();
+      }
+      
+      // Update sort indicator in UI
+      function updateSortIndicator() {
+        const indicator = document.getElementById('sortIndicator');
+        if (!indicator) return;
+        
+        const sortableFields = {
+          'tokenId': 'Token ID',
+          'priceEth': 'Price (ETH)',
+          'priceUsd': 'Price (USD)',
+          'claimableAmount': 'Claimable',
+          'claimableValueUsd': 'Claim Value',
+          'potentialSalePriceEth': 'Floor (ETH)',
+          'potentialSalePriceUsd': 'Floor (USD)',
+          'netValueUsd': 'Net Value'
+        };
+        
+        indicator.textContent = `Sorted by: ${sortableFields[currentSort.field]} (${currentSort.direction === 'asc' ? '↑' : '↓'})`;
+        indicator.classList.remove('d-none');
+        
+        // Update sort icons
+        document.querySelectorAll('.sort-icon').forEach(icon => {
+          icon.textContent = '↕️';
+        });
+        
+        const activeHeader = document.querySelector(`th[data-sort="${currentSort.field}"]`);
+        if (activeHeader) {
+          const icon = activeHeader.querySelector('.sort-icon');
+          if (icon) {
+            icon.textContent = currentSort.direction === 'asc' ? '↑' : '↓';
+          }
+        }
+      }
+      
+      // Handle sort when clicking on headers
+      function setupSortableHeaders() {
+        console.log('Setting up sortable headers');
+        const headers = document.querySelectorAll('.sortable');
+        console.log('Found sortable headers:', headers.length);
+        
+        headers.forEach(header => {
+          // Remove any existing event listeners to prevent duplicates
+          const newHeader = header.cloneNode(true);
+          header.parentNode.replaceChild(newHeader, header);
+          
+          newHeader.addEventListener('click', function() {
+            console.log('Header clicked:', this.getAttribute('data-sort'));
+            const field = this.getAttribute('data-sort');
+            if (!field) return;
+            
+            if (currentSort.field === field) {
+              // Toggle direction if same field
+              currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+              // New field, default to descending
+              currentSort.field = field;
+              currentSort.direction = 'desc';
+            }
+            
+            updateTableWithSort();
+          });
+        });
       }
       
       // Function to load all listings at once
@@ -249,9 +400,16 @@
               tableBody.appendChild(row);
             });
             
-            // Add new listings to our stored array
+            // Add new listings to our stored array, then dedupe and sort them
             allListings = allListings.concat(newListings);
+            allListings = dedupeByTokenId(allListings);
             console.log('Total listings loaded:', allListings.length);
+            
+            // Update table with sorted data
+            updateTableWithSort();
+            
+            // Setup sortable headers after table is created
+            setupSortableHeaders();
           }
           
           // If no more listings, remove scroll event listener
@@ -393,12 +551,13 @@
             Last Updated: ${new Date(data.timestamp || Date.now()).toLocaleTimeString()}
           `;
           
-          // Get listings from the response
+          // Get listings from the response and dedupe by tokenId
           const listings = Array.isArray(data.listings) ? data.listings : [];
-          console.log(`Displaying ${listings.length} listings`);
+          const uniqueListings = dedupeByTokenId(listings);
+          console.log(`Displaying ${uniqueListings.length} listings (deduped from ${listings.length})`);
           
           // Store all listings
-          allListings = listings;
+          allListings = uniqueListings;
           
           // Create results HTML
           let resultsHtml = '';
@@ -411,21 +570,21 @@
                 <table class="table table-striped table-hover">
                   <thead>
                     <tr>
-                      <th>Token ID</th>
-                      <th>Price (ETH)</th>
-                      <th>Price (USD)</th>
-                      <th>Claimable RUG</th>
-                      <th>Claimable Value</th>
-                      <th>Potential Sale Price (ETH)</th>
-                      <th>Potential Sale Price (USD)</th>
-                      <th>Net Value</th>
+                      <th class="sortable" data-sort="tokenId">Token ID <span class="sort-icon">↕️</span></th>
+                      <th class="sortable" data-sort="priceEth">Price (ETH) <span class="sort-icon">↕️</span></th>
+                      <th class="sortable" data-sort="priceUsd">Price (USD) <span class="sort-icon">↕️</span></th>
+                      <th class="sortable" data-sort="claimableAmount">Claimable RUG <span class="sort-icon">↕️</span></th>
+                      <th class="sortable" data-sort="claimableValueUsd">Claimable Value <span class="sort-icon">↕️</span></th>
+                      <th class="sortable" data-sort="potentialSalePriceEth">Potential Sale Price (ETH) <span class="sort-icon">↕️</span></th>
+                      <th class="sortable" data-sort="potentialSalePriceUsd">Potential Sale Price (USD) <span class="sort-icon">↕️</span></th>
+                      <th class="sortable" data-sort="netValueUsd">Net Value <span class="sort-icon">↕️</span></th>
                       <th>Action</th>
                     </tr>
                   </thead>
                   <tbody id="listingsTableBody">
             `;
             
-            listings.forEach(listing => {
+            uniqueListings.forEach(listing => {
               const netValueClass = parseFloat(listing.netValueUsd) > 0 ? 'positive-value' : 'negative-value';
               
               resultsHtml += `
@@ -449,6 +608,9 @@
           }
           
           resultsDiv.querySelector('.card-body').innerHTML = resultsHtml;
+          
+          // Setup sortable headers after table is created
+          setupSortableHeaders();
           
           // Show or hide the manual load more button
           const loadMoreFooter = document.getElementById('loadMoreFooter');
@@ -529,6 +691,9 @@
           `;
           
           resultsDiv.querySelector('.card-body').innerHTML = resultsHtml;
+          
+          // Setup sortable headers after table is created
+          setupSortableHeaders();
           
           // Remove scroll event listener when viewing a specific token
           window.removeEventListener('scroll', handleScroll);
